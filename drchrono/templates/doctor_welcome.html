@@ -1,11 +1,365 @@
+{% load static from staticfiles %}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
     <title>Welcome to drchrono</title>
+    <style>
+      .modal-mask {
+        position: fixed;
+        z-index: 9998;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, .5);
+        display: table;
+        transition: opacity .3s ease;
+      }
+      
+      .modal-wrapper {
+        display: table-cell;
+        vertical-align: middle;
+      }
+      
+      .modal-container {
+        width: 300px;
+        margin: 0px auto;
+        padding: 20px 30px;
+        background-color: #fff;
+        border-radius: 2px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, .33);
+        font-family: Helvetica, Arial, sans-serif;
+      }
+      .container {
+        font-family: 'Source Sans Pro', sans-serif;
+      }
+      .schedule {
+        margin-top: 3rem;
+      }
+      .schedule-top-info {
+        margin: 1rem;
+        border-bottom: 1px solid;
+      }
+      .appointment-card-row {
+      }
+      .appointment-card {
+        min-height: 8rem;
+        margin: 1rem;
+        padding: 1rem;
+        background-color: #efefef;
+      }
+      .empty-card {
+        margin: 1rem;
+        padding: 1rem;
+      }
+      .patient-link {
+        cursor: pointer;
+        text-decoration: underline;
+        font-weight: bold;
+      }
+      .modal-open {
+        height: 100vh;
+        overflow-y: hidden;
+      }
+      .status-badge {
+        //margin-left: 1rem;
+        //padding: 5px;
+      }
+      .refreshing {
+        visibility: hidden;
+        font-weight: bold;
+      }
+      .avatar {
+        max-width: 20rem;
+      }
+    </style>
 </head>
 <body>
-<h1>Welcome {{ doctor.first_name }} {{ doctor.last_name }}</h1>
-{{ doctor }}
+    <div class="container text-center" id="dashboard" v-bind:class="{'modal-open': modalOpen}">
+        <header class="pt-5">
+            <h1 class="display-3"><strong>Welcome Dr. [[ doctor.first_name ]]</strong></h1>
+            <h2 class="display-4">Here are your appointments for [[ now.format('dddd, MMMM Do YYYY') ]]</h2>
+            <h3 class="display-4"><strong>[[ now.format('h:mm:ss a') ]]</strong></h3>
+            <div :class="{'refreshing': !refreshing}">(refreshing...)</div>
+        </header>
+
+
+        <div class="schedule text-left">
+            <div class="row">
+                <div class="col-12 schedule-top-info now"><h3>Current Appointments</h3></div>
+            </div>
+            <template v-if="currentAppointments.length">
+                <appointment-card
+                  v-for="appointment in currentAppointments"
+                  v-bind:key="appointment.id"
+                  v-bind:patients="patients"
+                  v-on:modalopen="this.modalOpen = true"
+                  v-on:modalclosed="this.modalOpen = false"
+                  v-bind:appointment="appointment">
+                </appointment-card>
+            </template>
+            <div class="row empty-appt" v-else>
+                <div class="row empty-card">
+                    No Current Appointments
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-12 schedule-top-info next">
+                    <h3 v-if="nextAppointments.length">Next Appointment - [[ getStart(nextAppointments[0]).fromNow() ]]</h3>
+                    <h3 v-else>Next Appointment</h3>
+                </div>
+            </div>
+            <template v-if="nextAppointments.length">
+                <appointment-card
+                  v-for="appointment in nextAppointments"
+                  v-bind:key="appointment.id"
+                  v-bind:patients="patients"
+                  v-bind:appointment="appointment">
+                </appointment-card>
+            </template>
+            <div class="row empty-appt" v-else>
+                <div class="row empty-card">
+                    No Next Appointment
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-12 schedule-top-info"><h3>Upcoming</h3></div>
+            </div>
+            <template v-if="restAppointments.length">
+                <appointment-card
+                  v-for="appointment in restAppointments"
+                  v-bind:key="appointment.id"
+                  v-bind:patients="patients"
+                  v-bind:appointment="appointment">
+                </appointment-card>
+            </template>
+            <div class="row empty-appt" v-else>
+                <div class="row empty-card">
+                    No Upcoming Appointments
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="application/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.15/lodash.min.js" integrity="sha256-VeNaFBVDhoX3H+gJ37DpT/nTuZTdjYro9yBruHjVmoQ=" crossorigin="anonymous"></script>
+    <script type="application/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.24.0/moment.min.js" integrity="sha256-4iQZ6BVL4qNKlQ27TExEhBN1HFPvAvAMbFavKKosSWQ=" crossorigin="anonymous"></script>
+    <script type="application/javascript" src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script type="text/x-template" id="patient-modal-template">
+
+    <div class="modal-mask">
+      <div class="modal-wrapper">
+        <div class="modal-dialog modal-dialog-scrollable" role="document">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">[[ patient.first_name ]] [[ patient.last_name ]]</h5>
+              <button type="button" class="close" aria-label="Close" @click="$emit('close')">
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </div>
+            <div class="modal-body">
+              <div class="border-bottom text-center">
+                <img :src="[[ patient.patient_photo ]]" class="rounded mx-auto d-block avatar" alt="photo">
+              </div>
+              <table class="table">
+                <tbody>
+                  <tr v-for="value, key in relevant">
+                    <th scope="row">[[ value ]]</th>
+                    <td>[[ patient[key] ]]</td>
+                  </tr>
+                </tbody>  
+              </table>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" @click="$emit('close')">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    </script>
+    <script type="text/x-template" id="appt-card-template">
+
+    <div class="row appointment-card-row">
+      <div class="col-12 appointment-card" :style="{ 'background-color': appointment.color }">
+        <h5>
+          <strong>[[ getStart(appointment).format('h:mma') ]] - [[ getEnd(appointment).format('h:mma') ]]</strong>
+          <span class="badge status-badge badge-light" v-if="appointment.status">[[ appointment.status ]]</span>
+          <span class="badge status-badge badge-warning" v-if="appointment.status == 'Arrived'">Waiting [[ getWaitTime(appointment) ]] mins</span>
+        </h5>
+        <div class="">
+          <span class="patient-link" @click="modalOpen()">[[ getPatientName(getPatient(appointment.patient)) ]]</span> in Exam Room [[ appointment.exam_room ]]
+        </div>
+        <patient-modal
+          v-if="showModal"
+          @close="modalClosed()"
+          v-bind:patient="getPatient(appointment.patient)">
+        </patient-modal>
+        <div class="mt-1">Reason: [[ appointment.reason ]]</div>
+        <div class="mt-1">Notes: [[ appointment.notes ]]</div>
+      </div>
+    </div>
+
+    </script>
+    <script type="application/javascript">
+      Vue.component('patient-modal', {
+        delimiters: ['[[', ']]'],
+        props: ['patient'],
+        template: '#patient-modal-template',
+        data: function() {
+          return {
+            relevant: {
+              'id': 'Patient ID',
+              'first_name': 'First Name',
+              'middle_name': 'Middle Name',
+              'last_name': 'Last Name',
+              'gender': 'Gender',
+              'race': 'Race',
+              'email': 'Email',
+              'primary_care_physician': 'PCP',
+              'date_of_birth': 'DOB',
+              'social_security_number': 'SSN',
+              'home_phone': 'Home Phone #',
+              'cell_phone': 'Cell Phone #',
+              'patient_status': 'Patient Status',
+            }
+          };
+        }
+      });
+
+      Vue.component('appointment-card', {
+        delimiters: ['[[', ']]'],
+        props: ['appointment', 'patients'],
+        template: '#appt-card-template',
+        data: function() {
+          return {showModal: false}
+        },
+        methods: {
+          getWaitTime: function(appointment) {
+            return parseInt(moment.duration(moment().diff(moment(appointment.scheduled_time))).asMinutes());
+          },
+          modalOpen: function() {
+            this.showModal = true;
+            this.$emit('modalopen');
+          },
+          modalClosed: function() {
+            this.showModal = false;
+            this.$emit('modalclosed');
+          },
+          getStart: function(appointment) {
+              return moment(appointment.scheduled_time);
+          },
+          getEnd: function(appointment) {
+              let start = moment(appointment.scheduled_time);
+              return start.add(appointment.duration, 'minutes');
+          },
+          getPatient: function(patientId) {
+              return _.find(this.patients, { id: patientId });
+          },
+          getPatientName: function(patient) {
+              return `${patient.first_name} ${patient.last_name}`;
+          }
+        }
+      });
+
+      const dashboard = new Vue({
+        el: "#dashboard",
+        delimiters: ['[[', ']]'],
+        data: {
+          doctor: {{ doctor | safe }},
+          appointments: [],
+          patients: {{ patients | safe }},
+          now: moment(),
+          modalOpen: false,
+          refreshing: false,
+          client: function() {
+            const instance = axios.create({
+              baseURL: '/api'
+            });
+
+            instance.interceptors.request.use(config => {
+              this.refreshing = true;
+              return config;
+            })
+
+            instance.interceptors.response.use(response => {
+              this.refreshing = false;
+              return response;
+            })
+
+            return instance;
+          },
+        },
+        created: function() {
+          setInterval(() => this.now = new moment(), 1000);
+          setInterval(() => this.refreshAppointments(), 10 * 1000);
+        },
+        computed: {
+          currentAppointments: function() {
+            let current = this.appointments.filter(function (appointment) {
+              let start = moment(appointment.scheduled_time);
+              let end = start.clone().add(appointment.duration, 'minutes');
+              let now = moment();
+              return (start < now) && (now < end);
+            });
+            return current;
+          },
+          nextAppointments: function() {
+            let future = this.appointments.filter(function (appointment) {
+              let start = moment(appointment.scheduled_time);
+              return moment() < start;
+            });
+            if (future.length) {
+               return [future[0]];
+            } else {
+               return future;
+            }
+          },
+          restAppointments: function() {
+            let future = this.appointments.filter(function (appointment) {
+              let start = moment(appointment.scheduled_time);
+              return moment() < start;
+            });
+            return future.slice(1);
+          },
+        },
+        mounted: function() {
+          this.refreshAppointments();
+        },
+        methods: {
+          refreshAppointments: function() {
+            let self = this;
+            this.client().get('/appointments').then(function (response) {
+              console.log(response);
+              self.appointments = response.data;
+            }).catch(function (error) {
+              console.log(error);
+            });
+          },
+          startAppointment: function(appointment) {
+            //let payload = {'status': 'In Session'};
+            //let self = this;
+            //this.client().patch('/appointments/${appointment.id}', payload).then(function (response) {
+            //  console.log(response);
+            //  let i = _.findIndex(self.appointments, {id: appointment.id});
+            //  //self.set(self.appointments, = response.data;
+            //}).catch(function (error) {
+            //  console.log(error);
+            //});
+          },
+          getStart: function(appointment) {
+              return moment(appointment.scheduled_time);
+          },
+        }
+      });
+
+    </script>
 </body>
 </html>
